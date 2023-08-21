@@ -22,27 +22,37 @@ def train_tokenizer(text, model_prefix='m', vocab_size=5000):
     return sp
 
 class TLM(nn.Module):
-    def __init__(self, vocab_size, n_embed, block_size, num_heads):
+    def __init__(self, vocab_size, head_size, n_embed, block_size, num_heads):
         super().__init__()
         self.embeddings = nn.Embedding(vocab_size, n_embed)
         self.position_codes = nn.Embedding(block_size, n_embed)
-        self.selft_attention_heads = MultiHead(num_heads, n_embed, block_size)
+        #self.attention_heads = MultiHead(num_heads, n_embed, head_size, block_size)
+        #self.FFN = nn.Sequential(nn.Linear(num_heads* head_size, n_embed), nn.ReLU())
+        self.FFN2 = nn.Sequential(nn.Linear(n_embed, n_embed), nn.Sigmoid())
+        self.FFN = nn.Sequential(nn.Linear(n_embed, n_embed), nn.Sigmoid())
         self.lm_head = nn.Linear(n_embed, vocab_size)
-        self.FFN = nn.Sequential(nn.Linear(num_heads* n_embed, n_embed), nn.ReLU())
+
         self.block_size = block_size
         self.vocab_size = vocab_size
         self.n_embed = n_embed
+        self.head_size = head_size
 
     def forward(self, idx, targs=None):
 
         B,T = idx.shape
 
         emb = self.embeddings(idx)
+        #print (f"emb shape = {emb.shape}")
 
-        pos_emb = self.position_codes(torch.arange(T, device=device))
-        x = emb + pos_emb
-        x = self.selft_attention_heads(x)
-        x = self.FFN(x) + emb
+        #pos_emb = self.position_codes(torch.arange(T, device=device))
+        #print (f"pos_emb shape = {pos_emb.shape}")
+        #x = emb + pos_emb
+        #print (f"emb + pos_emb shape = {x.shape}")
+        #x = self.attention_heads(x)
+        #x = self.FFN(x) + emb
+        x = emb
+        x = self.FFN2(x)
+        x = self.FFN(x)
         logits = self.lm_head(x)
         
         if targs is None:
@@ -67,33 +77,34 @@ class TLM(nn.Module):
 
 
 class Head(nn.Module):
-    def __init__(self, head_size, block_size):
+    def __init__(self, embed_size, head_size, block_size):
         super().__init__()
-        self.K = nn.Linear(head_size, head_size, bias=False)
-        self.Q = nn.Linear(head_size, head_size, bias=False)
-        self.V = nn.Linear(head_size, head_size, bias=False)
+        print (embed_size, head_size)
+        self.K = nn.Linear(embed_size, head_size, bias=False)
+        self.Q = nn.Linear(embed_size, head_size, bias=False)
+        self.V = nn.Linear(embed_size, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size))) # lower triangular mask
     
     def forward(self, x):
-        B,T,C = x.shape
-        k = self.K(x) # (B, T, C)
-        q = self.Q(x) # (B, T, C)
+        B,T,H = x.shape
+        k = self.K(x) # (B, T, H)
+        q = self.Q(x) # (B, T, H)
         #binding weights
-        bweights = q @ k.transpose(-2,-1) * C**-0.5 # (B, T, C) @ (B, C, T) = (B, T, T)
+        bweights = q @ k.transpose(-2,-1) * H**-0.5 # (B, T, H) @ (B, C, H) = (B, T, T)
         bweights = bweights.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
         bweights = F.softmax(bweights, dim=-1) # (B, T, T)
         v = self.V(x) # (B, T, C)
-        bindings = bweights @ v # (B, T, T) @ (B, T, C) = (B, T, C)
+        bindings = bweights @ v # (B, T, T) @ (B, T, H) = (B, T, H)
         return bindings
 
 class MultiHead(nn.Module):
-    def __init__(self, num_heads, head_size, block_size):
+    def __init__(self, num_heads, embed_size, head_size, block_size):
         super().__init__()
-        self.heads = nn.ModuleList([Head(head_size, block_size) for _ in range(num_heads)])
+        self.heads = nn.ModuleList([Head(embed_size, head_size, block_size) for _ in range(num_heads)])
 
 
     def forward(self, x):
-        return torch.cat([head(x) + x for head in self.heads], dim=-1)
+        return torch.cat([head(x) for head in self.heads], dim=-1)
 
 # Text corpus to be used
 text_corpus = open("data.txt", "r").read()
@@ -141,6 +152,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 block_size = 2 
 batch_size = 1
 num_heads = 1
+n_embed = 132
+head_size = n_embed // 3
 
 #x = toks[:block_size]
 #y = toks[1:block_size+1]
@@ -155,7 +168,6 @@ data = torch.tensor([toks[i] for i in range(len(toks))])
 n = int(0.75*len(data))
 train_dat = data[:n]
 val_dat = data[n:]
-n_embed = 128
 offsets = range(len(data) - block_size)
 x_batch = torch.stack([data[idx:idx+block_size] for idx in offsets]).to(device)
 y_batch = torch.stack([data[idx+1:idx+block_size+1] for idx in offsets]).to(device)
@@ -167,7 +179,7 @@ y_batch = torch.stack([data[idx+1:idx+block_size+1] for idx in offsets]).to(devi
 
 trainSimple = True
 if trainSimple:
-    lm = TLM(V, n_embed, block_size, num_heads).to(device)
+    lm = TLM(V, head_size, n_embed, block_size, num_heads).to(device)
     optimizer = torch.optim.Adam(lm.parameters(), lr=0.01) 
     for epoch in range(1000):
         losses = []
