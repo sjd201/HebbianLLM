@@ -63,7 +63,7 @@ class TransNN(nn.Module):
         self.query = self.Q(x[-1])
         attention = self.query @ self.keys.transpose(-2, -1) * self.Ksize ** -0.5
         attention = F.softmax(attention, dim=-1) # (B, T, T)
-        print (f"attention: {attention}")
+        #print (f"attention: {attention[0]:1.3f} {attention[1]:1.3f}")
         out = attention @ self.values
         x = self.FFN(out) + residual
         x = self.fc2(x)
@@ -107,12 +107,12 @@ def train(model, dataset, epochs):
         print(f'Epoch: {epoch} Loss: {total_loss/count}', flush=True)
         # save model checkpoint
 
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': total_loss/count,
-        }, f'checkpoint_{epoch}.pth')
+        #torch.save({
+        #    'epoch': epoch,
+        #    'model_state_dict': model.state_dict(),
+        #    'optimizer_state_dict': optimizer.state_dict(),
+        #    'loss': total_loss/count,
+        #}, f'checkpoint_{epoch}.pth')
 
 # Function for prediction
 def predict_next_word(tok, model, sp):
